@@ -158,9 +158,13 @@ function maskTitle(r) {
   return r.paragraphs.map((p) => p.replace(re, "█████"));
 }
 
+// Actions below quietly ignore repeats (a phone retrying after a dropped connection, or a
+// double tap), using the round number the client was looking at when it sent the action.
+const stale = (room, roundNo) => roundNo != null && Number(roundNo) !== room.idx + 1;
+
 export function start(room, pid) {
   requireHost(room, pid);
-  if (room.phase !== "lobby") throw fail(409, "Game already started");
+  if (room.phase !== "lobby") return; // already started
   if (![...room.players.values()].some((p) => p.reviews.length))
     throw fail(400, "Nobody here has any recent written reviews to play with");
   for (const p of room.players.values()) p.score = 0;
@@ -193,10 +197,11 @@ function checkAllAnswered(room) {
   if (guessers.length && guessers.every((p) => room.answers.has(p.id))) reveal(room);
 }
 
-export function answer(room, pid, { person, film }) {
+export function answer(room, pid, { person, film, round: roundNo }) {
   requirePlayer(room, pid);
-  if (room.phase !== "question") throw fail(409, "Not accepting answers right now");
-  if (room.answers.has(pid)) throw fail(409, "Already locked in");
+  if (stale(room, roundNo)) return;
+  if (room.phase !== "question") throw fail(409, "Too late! Time's up.");
+  if (room.answers.has(pid)) return; // already locked in
   const r = round(room);
   if (!r.filmOptions.some((o) => o.key === film)) throw fail(400, "Pick a film");
   if (room.askPerson && !room.players.has(person)) throw fail(400, "Pick who wrote it");
@@ -226,21 +231,24 @@ function reveal(room) {
   broadcast(room);
 }
 
-export function revealNow(room, pid) {
+export function revealNow(room, pid, { round: roundNo } = {}) {
   requirePlayer(room, pid);
   if (!canControl(room, pid)) throw fail(403, "Only the host can do that");
+  if (stale(room, roundNo)) return;
   reveal(room);
 }
 
-export function next(room, pid) {
+export function next(room, pid, { round: roundNo } = {}) {
   requirePlayer(room, pid);
   if (!canControl(room, pid)) throw fail(403, "Only the host can do that");
-  if (room.phase !== "reveal") throw fail(409, "Nothing to advance");
+  // Already advanced (e.g. the first tap got through but its response was lost): nothing to do.
+  if (room.phase !== "reveal" || stale(room, roundNo)) return;
   nextRound(room);
 }
 
 export function backToLobby(room, pid) {
   requireHost(room, pid);
+  if (room.phase === "lobby") return; // already there
   if (room.phase !== "over") throw fail(409, "Game isn't over");
   room.phase = "lobby";
   room.rounds = [];

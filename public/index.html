@@ -115,17 +115,36 @@ let state = null, es = null, lanUrls = [];
 let pick = { round: 0, person: null, film: null };
 let busy = false, errMsg = "";
 const draft = { name: store.get("lbr-name") || "", code: "" };
-let timerInt = null, localDeadline = 0;
+let timerInt = null, localDeadline = 0, deadlineRound = 0;
 
 fetch("/api/info").then((r) => r.json()).then((d) => { lanUrls = d.lanUrls || []; if (state?.phase === "lobby") render(); }).catch(() => {});
 
+const NETWORK_ERROR = "Connection problem. Check your signal and tap again.";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Phones often drop idle connections (screen lock, Wi-Fi ↔ mobile data). Safari reports that as
+// "Load failed" before the request ever reaches the server, so retry network failures a few times.
+// The server ignores duplicate actions, so a retry can never e.g. skip a round.
 async function api(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+      break;
+    } catch {
+      if (attempt >= 3) {
+        if (session) connect(); // resync in case the live connection died too
+        throw new Error(NETWORK_ERROR);
+      }
+      await sleep(400 * (attempt + 1));
+    }
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
   return data;
 }
-const act = (action, extra) => api(`/api/rooms/${session.code}/${action}`, { pid: session.pid, ...extra });
+// `round` lets the server recognise (and ignore) a repeated tap for a round that's already moved on.
+const act = (action, extra) => api(`/api/rooms/${session.code}/${action}`, { pid: session.pid, round: state?.roundNumber, ...extra });
 
 async function run(fn) {
   if (busy) return;
@@ -134,17 +153,30 @@ async function run(fn) {
   busy = false; render();
 }
 
+// Fix the countdown once per round from the server's clock. Re-rendering (e.g. tapping an option)
+// must never move it, otherwise the bar jumps back and looks like you have more time than you do.
+function applyState(s) {
+  state = s;
+  if (s.phase === "question" && s.round && s.roundNumber !== deadlineRound) {
+    deadlineRound = s.roundNumber;
+    localDeadline = Date.now() + s.round.remainingMs;
+  } else if (s.phase !== "question") {
+    deadlineRound = 0;
+  }
+  render();
+}
+
 // ---------- connection ----------
 async function connect() {
   if (!session) return render();
   try {
     const r = await fetch(`/api/rooms/${session.code}/state?pid=${session.pid}`);
     if (r.status === 403 || r.status === 404) { leaveLocal(); errMsg = "That game has ended."; return render(); }
-    if (r.ok) { state = await r.json(); render(); }
+    if (r.ok) applyState(await r.json());
   } catch {}
   es?.close();
   es = new EventSource(`/api/rooms/${session.code}/events?pid=${session.pid}`);
-  es.onmessage = (e) => { state = JSON.parse(e.data); render(); };
+  es.onmessage = (e) => applyState(JSON.parse(e.data));
   es.onerror = () => { if (es.readyState === 2) setTimeout(connect, 2000); };
 }
 document.addEventListener("visibilitychange", () => {
@@ -310,7 +342,7 @@ function questionView() {
       ${answeredRow}${controls}`;
   }
   return `${topbar()}
-    <div class="timer" id="timer"><i></i></div>
+    <div class="timer ${timeLeft() < 3_000 ? "low" : ""}" id="timer"><i style="width:${timerPct()}%"></i></div>
     ${reviewCard()}
     ${body}
     <div class="err">${esc(errMsg)}</div>`;
@@ -322,14 +354,15 @@ window.choose = (kind, v) => {
 window.lockIn = () => run(() => act("answer", { person: pick.person, film: pick.film }));
 window.revealNow = () => run(() => act("reveal"));
 
+const timeLeft = () => Math.max(0, localDeadline - Date.now());
+const timerPct = () => (timeLeft() / state.questionMs) * 100;
+
 function startTimer() {
   const el = document.getElementById("timer");
   if (!el) return;
-  localDeadline = Date.now() + state.round.remainingMs;
   const tick = () => {
-    const left = Math.max(0, localDeadline - Date.now());
-    el.firstElementChild.style.width = `${(left / state.questionMs) * 100}%`;
-    el.classList.toggle("low", left < 3_000);
+    el.firstElementChild.style.width = `${timerPct()}%`;
+    el.classList.toggle("low", timeLeft() < 3_000);
   };
   tick();
   timerInt = setInterval(tick, 250);
