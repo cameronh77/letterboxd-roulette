@@ -329,7 +329,7 @@ function startTimer() {
   const tick = () => {
     const left = Math.max(0, localDeadline - Date.now());
     el.firstElementChild.style.width = `${(left / state.questionMs) * 100}%`;
-    el.classList.toggle("low", left < 10_000);
+    el.classList.toggle("low", left < 3_000);
   };
   tick();
   timerInt = setInterval(tick, 250);

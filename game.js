@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { scrapeUser } from "./scrape.js";
 
-export const QUESTION_MS = 60_000;
+export const QUESTION_MS = 10_000;
 // Each correct answer is worth up to MAX_POINTS if you lock in instantly, sliding down
 // to MIN_POINTS at the buzzer. Wrong answers are worth 0.
 const MAX_POINTS = 1000;
