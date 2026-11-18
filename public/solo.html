@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Letterboxd Roulette</title>
+<style>
+  :root {
+    --bg: #14181c; --panel: #1c2228; --line: #2c3440; --text: #d8e0e8; --muted: #8899aa;
+    --orange: #ff8000; --green: #00e054; --blue: #40bcf4;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 80px; }
+  h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.02em; }
+  h1 .dots span { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1 1 260px; padding: 12px 14px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font-size: 16px; }
+  input:focus { outline: 2px solid var(--blue); border-color: transparent; }
+  button { padding: 12px 18px; border-radius: 6px; border: 0; cursor: pointer; font-weight: 600;
+    font-size: 15px; background: var(--green); color: #0b1a10; }
+  button.secondary { background: var(--line); color: var(--text); }
+  button.reveal { background: var(--orange); color: #1a0e00; }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { color: var(--muted); margin: 14px 0 0; min-height: 1.5em; }
+  .status.err { color: #ff6b6b; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; margin-top: 24px; }
+  .review p { margin: 0 0 12px; white-space: pre-wrap; }
+  .review { font-size: 18px; }
+  .spoiler { color: var(--orange); font-size: 13px; margin-bottom: 10px; }
+  .actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+  .answer { display: flex; gap: 16px; align-items: center; margin-top: 20px; padding-top: 20px;
+    border-top: 1px solid var(--line); animation: pop .35s ease; }
+  .answer img { width: 80px; border-radius: 4px; box-shadow: 0 4px 16px #0008; }
+  .answer .film { font-size: 22px; font-weight: 700; color: #fff; }
+  .answer .film a { color: inherit; text-decoration: none; }
+  .answer .film a:hover { color: var(--blue); }
+  .answer .who { color: var(--muted); }
+  .answer .who strong { color: var(--text); }
+  .stars { color: var(--green); letter-spacing: 1px; }
+  .heart { color: var(--orange); }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .score { color: var(--muted); font-size: 14px; margin-top: 24px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 40px 0 12px; }
+  .list { display: grid; gap: 10px; }
+  .item { display: grid; grid-template-columns: 50px 1fr; gap: 14px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .item img { width: 50px; border-radius: 3px; }
+  .item .t { font-weight: 600; color: #fff; }
+  .item .m { font-size: 13px; color: var(--muted); }
+  .item .x { font-size: 14px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical; overflow: hidden; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="dots"><span style="background:var(--orange)"></span><span style="background:var(--green)"></span><span style="background:var(--blue)"></span></span> Letterboxd Roulette</h1>
+  <p class="sub">Load someone's Letterboxd reviews, read a random one, and guess the film before you reveal it. Separate several usernames with commas to guess who wrote it too.</p>
+
+  <form id="form">
+    <input id="users" placeholder="letterboxd username(s), e.g. davidehrlich, karsten" autocomplete="off" />
+    <button id="load" type="submit">Load reviews</button>
+  </form>
+  <p id="status" class="status"></p>
+
+  <section id="game" class="card hidden">
+    <div id="spoiler" class="spoiler hidden">⚠ This review may contain spoilers</div>
+    <div id="review" class="review"></div>
+    <div class="actions">
+      <button id="reveal" class="reveal">Reveal</button>
+      <button id="next" class="secondary">Next random review</button>
+    </div>
+    <div id="answer" class="answer hidden"></div>
+    <div id="score" class="score"></div>
+  </section>
+
+  <section id="all" class="hidden">
+    <h2>All loaded reviews <button id="toggle" class="secondary" style="padding:4px 10px;font-size:12px;margin-left:8px">Show</button></h2>
+    <div id="list" class="list hidden"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let pool = [], deck = [], current = null, seen = 0, multiUser = false;
+
+const stars = (r) => r == null ? "" : "★".repeat(Math.floor(r)) + (r % 1 ? "½" : "");
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+try { $("users").value = localStorage.getItem("lbr-users") || ""; } catch {}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const users = $("users").value.trim();
+  if (!users) return;
+  try { localStorage.setItem("lbr-users", users); } catch {}
+  $("load").disabled = true;
+  setStatus("Scraping reviews…");
+  try {
+    const res = await fetch(`/api/reviews?users=${encodeURIComponent(users)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    pool = data.users.flatMap((u) => u.reviews);
+    multiUser = data.users.length > 1;
+    const summary = data.users.map((u) => `${u.displayName}: ${u.reviews.length}`).join(" · ");
+    const errs = data.errors.length ? ` — ${data.errors.join("; ")}` : "";
+    if (!pool.length) throw new Error((data.errors.join("; ") || "No written reviews found in recent activity"));
+    setStatus(`Loaded ${pool.length} reviews (${summary})${errs}`, !!data.errors.length);
+    deck = []; seen = 0;
+    renderList();
+    nextReview();
+  } catch (err) {
+    setStatus(err.message, true);
+    $("game").classList.add("hidden"); $("all").classList.add("hidden");
+  } finally { $("load").disabled = false; }
+});
+
+function setStatus(msg, err) { $("status").textContent = msg; $("status").className = "status" + (err ? " err" : ""); }
+
+// Shuffle-bag so you don't get repeats until every review has been shown.
+function draw() {
+  if (!deck.length) {
+    deck = pool.slice();
+    for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    if (current && deck.length > 1 && deck[deck.length - 1] === current) deck.unshift(deck.pop());
+  }
+  return deck.pop();
+}
+
+function nextReview() {
+  current = draw(); seen++;
+  $("game").classList.remove("hidden");
+  $("spoiler").classList.toggle("hidden", !current.spoilers);
+  // Hide the title if the reviewer names the film in their text.
+  const re = new RegExp(current.film.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  $("review").innerHTML = current.paragraphs.map((p) => `<p>${esc(p).replace(re, "█████")}</p>`).join("");
+  $("answer").classList.add("hidden");
+  $("reveal").disabled = false;
+  $("score").textContent = `Review ${seen} · ${pool.length - deck.length} of ${pool.length} drawn this round`;
+}
+
+$("reveal").addEventListener("click", () => {
+  const r = current;
+  $("review").innerHTML = r.paragraphs.map((p) => `<p>${esc(p)}</p>`).join("");
+  $("answer").innerHTML = `
+    ${r.poster ? `<img src="${r.poster}" alt="">` : ""}
+    <div>
+      <div class="film"><a href="${r.link}" target="_blank" rel="noopener">${esc(r.film)}</a> <span style="color:var(--muted);font-weight:400">${r.year}</span></div>
+      <div class="who">Reviewed by <strong>${esc(r.displayName)}</strong> (@${esc(r.username)})</div>
+      <div><span class="stars">${stars(r.rating)}</span> ${r.liked ? '<span class="heart">♥</span>' : ""} ${r.rewatch ? '<span class="who">↻ rewatch</span>' : ""}</div>
+    </div>`;
+  $("answer").classList.remove("hidden");
+  $("reveal").disabled = true;
+});
+
+$("next").addEventListener("click", nextReview);
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || $("game").classList.contains("hidden")) return;
+  if (e.key === " ") { e.preventDefault(); $("reveal").disabled ? nextReview() : $("reveal").click(); }
+});
+
+$("toggle").addEventListener("click", () => {
+  const hidden = $("list").classList.toggle("hidden");
+  $("toggle").textContent = hidden ? "Show" : "Hide";
+});
+
+function renderList() {
+  $("all").classList.remove("hidden");
+  $("list").innerHTML = pool.map((r) => `
+    <a class="item" href="${r.link}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+      ${r.poster ? `<img src="${r.poster}" alt="">` : "<div></div>"}
+      <div>
+        <div class="t">${esc(r.film)} <span class="m">${r.year}</span></div>
+        <div class="m">${esc(r.displayName)} · <span class="stars">${stars(r.rating)}</span> ${r.liked ? '<span class="heart">♥</span>' : ""} · ${r.watchedDate}</div>
+        <div class="x">${esc(r.paragraphs.join(" "))}</div>
+      </div>
+    </a>`).join("");
+}
+</script>
+</body>
+</html>
