@@ -62,6 +62,7 @@
   .review { font-size: 18px; line-height: 1.55; max-height: 46vh; overflow: auto; }
   .review p { white-space: pre-wrap; }
   .review p:last-child { margin-bottom: 0; }
+  .redact { color: var(--line); letter-spacing: -1px; }
   .spoiler { color: var(--orange); font-size: 13px; margin-bottom: 8px; }
   .opts { display: grid; gap: 8px; }
   .opts.people { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
@@ -100,6 +101,8 @@
 const app = document.getElementById("app");
 const COLORS = ["#ff8000", "#00e054", "#40bcf4", "#ff5ca8", "#ffd23f", "#b48cff", "#5cffd6", "#ff7a5c", "#9fe870", "#7ab8ff", "#ffa8e0", "#e0c080"];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pts = (n) => Number(n || 0).toLocaleString();
+const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 const stars = (r) => (r == null ? "" : "★".repeat(Math.floor(r)) + (r % 1 ? "½" : ""));
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
@@ -250,7 +253,7 @@ function lobbyView() {
       </div>`).join("")}
     </div>
     <p class="small muted" style="margin-top:10px">${pool} reviews in the pool.
-      ${state.players.length < 2 ? "Solo: just guess the film. Add friends to also guess who wrote it." : "Guess the film (+1) and who wrote it (+1). Your own reviews are in there too!"}</p>
+      ${state.players.length < 2 ? "Solo: just guess the film. Add friends to also guess who wrote it." : "Guess the film and who wrote it. Your own reviews are in there too!"} Each right answer scores 500–1,000 points: the faster you lock in, the more you get.</p>
 
     ${isHost() ? `
       <h2>Rounds</h2>
@@ -273,13 +276,13 @@ window.leaveGame = () => run(async () => { try { await act("leave"); } catch {} 
 
 function topbar() {
   return `<div class="topbar"><span class="muted">Round <b>${state.roundNumber}</b> / ${state.roundCount}</span>
-    <span class="muted">You: <b>${me()?.score ?? 0}</b> pts</span></div>`;
+    <span class="muted">You: <b>${pts(me()?.score)}</b> pts</span></div>`;
 }
 function reviewCard() {
   const r = state.round;
   return `<div class="card">
     ${r.spoilers ? '<div class="spoiler">⚠ May contain spoilers</div>' : ""}
-    <div class="review">${r.paragraphs.map((p) => `<p>${esc(p)}</p>`).join("")}</div>
+    <div class="review">${r.paragraphs.map((p) => `<p>${esc(p).replace(/█████/g, '<span class="redact">█████</span>')}</p>`).join("")}</div>
   </div>`;
 }
 
@@ -338,7 +341,7 @@ function revealView() {
   const author = state.players.find((p) => p.id === a.authorId);
   let gain = "";
   const yours = a.authorId === state.you && state.players.length > 1;
-  if (mine) gain = `<div class="gain ${mine.gained ? "pos" : "zero"}">${mine.gained ? `+${mine.gained} point${mine.gained > 1 ? "s" : ""}!` : yours && !mine.personRight ? "You didn't recognise your own review 😅" : "No points this time"}</div>`;
+  if (mine) gain = `<div class="gain ${mine.gained ? "pos" : "zero"}">${mine.gained ? `+${pts(mine.gained)} points!` : yours && !mine.personRight ? "You didn't recognise your own review 😅" : "No points this time"}</div>`;
   else gain = `<div class="gain zero">⏱ Out of time</div>`;
   if (yours) gain += `<div class="muted" style="text-align:center">That one was yours!</div>`;
 
@@ -346,7 +349,8 @@ function revealView() {
   const results = a.results.length ? a.results.map((x) => `
     <div class="res">${esc(nameOf(x.id))}:
       ${state.askPerson ? `<span class="${x.personRight ? "ok" : "no"}">${x.personRight ? "✓" : "✗"} ${esc(nameOf(x.person))}</span> · ` : ""}
-      <span class="${x.filmRight ? "ok" : "no"}">${x.filmRight ? "✓" : "✗"} ${esc(filmLabel(x.film))}</span></div>`).join("")
+      <span class="${x.filmRight ? "ok" : "no"}">${x.filmRight ? "✓" : "✗"} ${esc(filmLabel(x.film))}</span>
+      · ${secs(x.ms)} · <b style="color:${x.gained ? "var(--green)" : "var(--muted)"}">+${pts(x.gained)}</b></div>`).join("")
     : `<div class="res">Nobody answered.</div>`;
 
   const last = state.roundNumber >= state.roundCount;
@@ -384,7 +388,7 @@ function scoreboard() {
       <span class="muted" style="width:18px;text-align:center;font-weight:700">${i + 1}</span>
       ${avatar(p)}
       <div class="name"><b>${esc(p.displayName)}${p.id === state.you ? '<span class="tag">YOU</span>' : ""}</b></div>
-      <div class="score">${p.score}</div>
+      <div class="score">${pts(p.score)}</div>
     </div>`).join("")}</div>`;
 }
 
@@ -392,12 +396,11 @@ function overView() {
   const sorted = [...state.players].sort((a, b) => b.score - a.score);
   const top = sorted[0]?.score ?? 0;
   const winners = sorted.filter((p) => p.score === top);
-  const max = state.roundCount * (state.askPerson ? 2 : 1);
   return `${header()}
     <div class="podium">
       <div class="trophy">🏆</div>
       <div class="winner">${winners.map((w) => esc(w.displayName)).join(" & ")} ${winners.length > 1 ? "tie!" : "wins!"}</div>
-      <div class="muted">${top} / ${max} points</div>
+      <div class="muted">${pts(top)} points</div>
     </div>
     <h2>Final scores</h2>
     ${scoreboard()}

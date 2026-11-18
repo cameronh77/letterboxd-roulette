@@ -13,6 +13,10 @@ npm start        # prints a localhost URL and a Wi-Fi URL
 3. Friends scan the QR / open the link, enter their username, and join.
 4. Pick 10/20/30 rounds and start. 60s per round; it reveals early once everyone locks in.
 
+**Scoring:** each correct answer (film, and who wrote it) is worth 1,000 points if you lock in
+instantly, sliding down to 500 at the buzzer. Wrong answers score 0.
+
+
 Solo mode (no lobby) is at `/solo`. No dependencies, Node 18+.
 
 **Notes**

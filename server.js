@@ -81,7 +81,7 @@ http.createServer(async (req, res) => {
       }
       if (actions[action] && req.method === "POST") {
         const body = await readJson(req);
-        actions[action](room, body.pid, body);
+        await actions[action](room, body.pid, body);
         return send(res, 200);
       }
       return send(res, 404, { error: "Unknown action" });

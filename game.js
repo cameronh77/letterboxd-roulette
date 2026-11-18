@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import { scrapeUser } from "./scrape.js";
 
 export const QUESTION_MS = 60_000;
+// Each correct answer is worth up to MAX_POINTS if you lock in instantly, sliding down
+// to MIN_POINTS at the buzzer. Wrong answers are worth 0.
+const MAX_POINTS = 1000;
+const MIN_POINTS = 500;
 const MAX_PLAYERS = 12;
 const ROOM_IDLE_MS = 60 * 60 * 1000;
 
@@ -15,8 +19,8 @@ const shuffle = (a) => {
   }
   return a;
 };
-const filmKey = (r) => `${r.film.toLowerCase()}|${r.year}`;
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const filmKey = (r) => `${r.film.toLowerCase()}|${r.year}`;
 
 function newCode() {
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
@@ -137,16 +141,21 @@ function buildRounds(room) {
   return picked.map((r) => {
     const key = filmKey(r);
     const decoys = shuffle([...allFilms.keys()].filter((k) => k !== key)).slice(0, 3);
-    // Hide the title if the reviewer names the film (skip very short titles like "Up" or "Us").
-    const re = r.film.length > 3 ? new RegExp(`(?<!\\w)${escRe(r.film)}(?!\\w)`, "gi") : null;
     return {
       review: r,
       filmKey: key,
       filmOptions: shuffle([key, ...decoys]).map((k) => ({ key: k, label: allFilms.get(k) })),
-      masked: r.paragraphs.map((p) => (re ? p.replace(re, "█████") : p)),
+      masked: maskTitle(r),
       results: null,
     };
   });
+}
+
+// Black out the film title if the reviewer names it (skip very short titles like "Up" or "Us").
+function maskTitle(r) {
+  if (r.film.length <= 3) return r.paragraphs;
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${escRe(r.film)}(?![\\p{L}\\p{N}])`, "giu");
+  return r.paragraphs.map((p) => p.replace(re, "█████"));
 }
 
 export function start(room, pid) {
@@ -191,7 +200,7 @@ export function answer(room, pid, { person, film }) {
   const r = round(room);
   if (!r.filmOptions.some((o) => o.key === film)) throw fail(400, "Pick a film");
   if (room.askPerson && !room.players.has(person)) throw fail(400, "Pick who wrote it");
-  room.answers.set(pid, { person: room.askPerson ? person : null, film });
+  room.answers.set(pid, { person: room.askPerson ? person : null, film, at: Date.now() });
   broadcast(room);
   checkAllAnswered(room);
 }
@@ -206,9 +215,12 @@ function reveal(room) {
     if (!p) continue;
     const filmRight = a.film === r.filmKey;
     const personRight = room.askPerson && a.person === r.review.authorId;
-    const gained = Number(filmRight) + Number(personRight);
+    const ms = Math.max(0, a.at - (room.deadline - QUESTION_MS));
+    const speed = Math.max(0, 1 - ms / QUESTION_MS);
+    const each = Math.round(MIN_POINTS + (MAX_POINTS - MIN_POINTS) * speed);
+    const gained = each * (Number(filmRight) + Number(personRight));
     p.score += gained;
-    r.results.push({ id: pid, person: a.person, film: a.film, filmRight, personRight, gained });
+    r.results.push({ id: pid, person: a.person, film: a.film, filmRight, personRight, gained, ms });
   }
   room.phase = "reveal";
   broadcast(room);
